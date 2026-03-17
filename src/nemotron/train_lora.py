@@ -109,9 +109,10 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
     model_kwargs = {
         "trust_remote_code": True,
+        "low_cpu_mem_usage": True,
     }
 
     if cfg.bnb_compute_dtype == "float16":
@@ -121,40 +122,55 @@ def main() -> None:
     else:
         bnb_compute_dtype = torch.bfloat16
 
-    # Always use 8-bit quantization with CPU offload for 30B model
+    # Use quantization + constrained device mapping for 30B model
     if torch.cuda.is_available():
-        model_kwargs["quantization_config"] = BitsAndBytesConfig(
-            load_in_8bit=True,
-            llm_int8_enable_fp32_cpu_offload=True,
-        )
-        # Load on CPU first to avoid GPU OOM, then move during training
-        model_kwargs["device_map"] = "cpu"
-        model_kwargs["low_cpu_mem_usage"] = True
+        gpu_count = torch.cuda.device_count()
+        max_memory = {
+            gpu_idx: f"{cfg.gpu_max_memory_gib}GiB" for gpu_idx in range(gpu_count)
+        }
+        max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
+
+        if cfg.use_4bit:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=bnb_compute_dtype,
+                bnb_4bit_quant_type=cfg.bnb_quant_type,
+                bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
+            )
+        else:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
+            )
+
+        model_kwargs["device_map"] = "auto"
+        model_kwargs["max_memory"] = max_memory
+        if cfg.use_cpu_offload:
+            cfg.offload_dir.mkdir(parents=True, exist_ok=True)
+            model_kwargs["offload_folder"] = str(cfg.offload_dir)
     else:
-        model_kwargs["dtype"] = dtype
+        model_kwargs["torch_dtype"] = torch_dtype
 
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     except RuntimeError as e:
-        print(f"Model loading failed: {e}")
-        if torch.cuda.is_available():
-            print("Retrying with bfloat16 on CPU (no quantization)...")
-            # Fall back to standard precision on CPU
-            model_kwargs.pop("quantization_config", None)
-            model_kwargs["device_map"] = "cpu"
-            model_kwargs["torch_dtype"] = torch.bfloat16
-            model_kwargs["low_cpu_mem_usage"] = True
+        if (
+            "CUDA out of memory" in str(e)
+            and torch.cuda.is_available()
+            and cfg.use_4bit
+        ):
+            print(f"4-bit loading OOM, falling back to 8-bit: {e}")
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
+            )
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         else:
             raise
 
-    # Move model to GPU for training
-    if torch.cuda.is_available():
-        model = model.to(0)  # Move to GPU 0
-
     model.config.use_cache = False
 
-    # Always prepare quantized model for training (we use 8-bit on CUDA)
+    # Prepare quantized model for LoRA training.
     if torch.cuda.is_available():
         model = prepare_model_for_kbit_training(model)
 
