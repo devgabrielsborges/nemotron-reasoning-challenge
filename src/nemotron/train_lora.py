@@ -129,6 +129,17 @@ def main() -> None:
             gpu_idx: f"{cfg.gpu_max_memory_gib}GiB" for gpu_idx in range(gpu_count)
         }
         max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
+        device_map_strategy = "balanced_low_0" if gpu_count > 1 else "auto"
+
+        print(
+            "CUDA placement:",
+            {
+                "visible_gpus": gpu_count,
+                "device_map": device_map_strategy,
+                "max_memory": max_memory,
+                "use_4bit": cfg.use_4bit,
+            },
+        )
 
         if cfg.use_4bit:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
@@ -143,8 +154,9 @@ def main() -> None:
                 llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
             )
 
-        model_kwargs["device_map"] = "auto"
+        model_kwargs["device_map"] = device_map_strategy
         model_kwargs["max_memory"] = max_memory
+        model_kwargs["offload_state_dict"] = True
         if cfg.use_cpu_offload:
             cfg.offload_dir.mkdir(parents=True, exist_ok=True)
             model_kwargs["offload_folder"] = str(cfg.offload_dir)
@@ -164,6 +176,14 @@ def main() -> None:
                 load_in_8bit=True,
                 llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
             )
+            if "max_memory" in model_kwargs:
+                tightened_max_memory = dict(model_kwargs["max_memory"])
+                for gpu_idx in range(torch.cuda.device_count()):
+                    tightened_max_memory[gpu_idx] = (
+                        f"{max(6, cfg.gpu_max_memory_gib - 2)}GiB"
+                    )
+                model_kwargs["max_memory"] = tightened_max_memory
+                print("Retrying with tightened max_memory:", tightened_max_memory)
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         else:
             raise
