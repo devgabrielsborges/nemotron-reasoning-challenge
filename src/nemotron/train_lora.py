@@ -127,14 +127,8 @@ def main() -> None:
             load_in_8bit=True,
             llm_int8_enable_fp32_cpu_offload=True,
         )
-        # Aggressively offload to CPU: keep only 15GiB on GPU, rest on CPU
-        cfg.offload_dir.mkdir(parents=True, exist_ok=True)
-        model_kwargs["device_map"] = "auto"
-        model_kwargs["offload_folder"] = str(cfg.offload_dir)
-        model_kwargs["max_memory"] = {
-            0: "15GiB",  # Conservative GPU limit for 24GB card
-            "cpu": f"{cfg.cpu_max_memory_gib}GiB",
-        }
+        # Simplest device_map: keep all on GPU 0, 8-bit handles CPU offload internally
+        model_kwargs["device_map"] = {"": 0}
     else:
         model_kwargs["dtype"] = dtype
 
@@ -143,11 +137,8 @@ def main() -> None:
     except RuntimeError as e:
         print(f"Model loading failed: {e}")
         if torch.cuda.is_available():
-            print("Retrying with even more conservative GPU memory limit (10GiB)...")
-            model_kwargs["max_memory"] = {
-                0: "10GiB",
-                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
-            }
+            print("Retrying without device_map...")
+            model_kwargs.pop("device_map", None)
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         else:
             raise
