@@ -18,11 +18,16 @@ class LogisticRegressionModel(BaseModel):
         return LogisticRegression(solver="saga", **params)
 
     def suggest_params(self, trial: optuna.Trial) -> dict:
-        return {
+        penalty = trial.suggest_categorical("penalty", ["l2", "elasticnet"])
+        params = {
             "C": trial.suggest_float("C", 1e-4, 10.0, log=True),
-            "l1_ratio": trial.suggest_float("l1_ratio", 0.0, 1.0),
+            "penalty": penalty,
             "max_iter": trial.suggest_int("max_iter", 100, 1000, step=100),
+            "multi_class": "auto",
         }
+        if penalty == "elasticnet":
+            params["l1_ratio"] = trial.suggest_float("l1_ratio", 0.0, 1.0)
+        return params
 
 
 if __name__ == "__main__":

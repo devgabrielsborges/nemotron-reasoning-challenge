@@ -9,67 +9,57 @@ import os
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from scipy import sparse
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import KNNImputer, SimpleImputer
+from sklearn.decomposition import TruncatedSVD
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 
 def preprocess_data(data: pd.DataFrame, target_column: str | None = None):
     target_column = target_column or os.getenv("TARGET_COLUMN")
-    id_column = os.getenv("ID_COLUMN", "id")
-    # FIXME add data transformation here if needed
-    X = data.drop(columns=[target_column, id_column], errors="ignore")
-    # FIXME change it as needed
-    y = data[target_column].map({"Presence": 1, "Absence": 0}).astype("uint8")
+    prompt_column = os.getenv("PROMPT_COLUMN", "prompt")
+    n_components = int(os.getenv("SVD_COMPONENTS", "256"))
 
-    numerical_columns = X.select_dtypes(include=["int64", "float64"]).columns
-    categorical_columns = X.select_dtypes(
-        include=["object", "category", "bool", "string"]
-    ).columns
+    required_columns = {prompt_column, target_column}
+    missing_columns = required_columns - set(data.columns)
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns in train data: {sorted(missing_columns)}"
+        )
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+    X_text = data[prompt_column].fillna("").astype(str)
+    y = data[target_column].astype(str)
+
+    X_train_text, X_test_text, y_train, y_test = train_test_split(
+        X_text, y, test_size=0.2, random_state=42
     )
 
-    numerical_transformer = Pipeline(
-        steps=[("imputer", KNNImputer(n_neighbors=5)), ("scaler", StandardScaler())]
+    vectorizer = TfidfVectorizer(
+        lowercase=True,
+        analyzer="char_wb",
+        ngram_range=(3, 5),
+        min_df=2,
+        max_features=50000,
     )
+    X_train_sparse = vectorizer.fit_transform(X_train_text)
+    X_test_sparse = vectorizer.transform(X_test_text)
 
-    categorical_transformer = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore")),
-        ]
-    )
-
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numerical_transformer, numerical_columns),
-            ("cat", categorical_transformer, categorical_columns),
-        ]
-    )
-
-    X_train_preprocessed = preprocessor.fit_transform(X_train)
-    X_test_preprocessed = preprocessor.transform(X_test)
+    if X_train_sparse.shape[1] >= 3:
+        effective_components = max(
+            2,
+            min(n_components, X_train_sparse.shape[1] - 1, X_train_sparse.shape[0] - 1),
+        )
+        reducer = TruncatedSVD(n_components=effective_components, random_state=42)
+        X_train_preprocessed = reducer.fit_transform(X_train_sparse)
+        X_test_preprocessed = reducer.transform(X_test_sparse)
+    else:
+        X_train_preprocessed = X_train_sparse.toarray()
+        X_test_preprocessed = X_test_sparse.toarray()
 
     output_dir = Path(os.getenv("DATA_PROCESSED_DIR", "data/processed"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    X_train_out = (
-        X_train_preprocessed.toarray()
-        if sparse.issparse(X_train_preprocessed)
-        else X_train_preprocessed
-    )
-    X_test_out = (
-        X_test_preprocessed.toarray()
-        if sparse.issparse(X_test_preprocessed)
-        else X_test_preprocessed
-    )
-    np.save(output_dir / "X_train_preprocessed.npy", X_train_out)
-    np.save(output_dir / "X_test_preprocessed.npy", X_test_out)
+    np.save(output_dir / "X_train_preprocessed.npy", X_train_preprocessed)
+    np.save(output_dir / "X_test_preprocessed.npy", X_test_preprocessed)
     np.save(output_dir / "y_train.npy", y_train.values)
     np.save(output_dir / "y_test.npy", y_test.values)
 
@@ -77,15 +67,16 @@ def preprocess_data(data: pd.DataFrame, target_column: str | None = None):
     submission_test_path = raw_dir / "test.csv"
     if submission_test_path.exists():
         submission_data = pd.read_csv(submission_test_path)
-        X_submission = submission_data.drop(columns=[target_column], errors="ignore")
-        X_submission_features = X_submission.drop(columns=[id_column], errors="ignore")
-        X_submission_preprocessed = preprocessor.transform(X_submission_features)
-        X_sub_out = (
-            X_submission_preprocessed.toarray()
-            if sparse.issparse(X_submission_preprocessed)
-            else X_submission_preprocessed
-        )
-        np.save(output_dir / "X_submission_preprocessed.npy", X_sub_out)
+        if prompt_column not in submission_data.columns:
+            raise ValueError(f"Missing required column in test data: {prompt_column}")
+
+        X_submission_text = submission_data[prompt_column].fillna("").astype(str)
+        X_submission_sparse = vectorizer.transform(X_submission_text)
+        if X_train_sparse.shape[1] >= 3:
+            X_submission_preprocessed = reducer.transform(X_submission_sparse)
+        else:
+            X_submission_preprocessed = X_submission_sparse.toarray()
+        np.save(output_dir / "X_submission_preprocessed.npy", X_submission_preprocessed)
 
 
 if __name__ == "__main__":

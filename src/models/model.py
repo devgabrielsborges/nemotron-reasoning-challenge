@@ -14,7 +14,7 @@ from sklearn.metrics import (ConfusionMatrixDisplay, PrecisionRecallDisplay,
                              get_scorer, log_loss, mean_absolute_error,
                              mean_squared_error, precision_score, r2_score,
                              recall_score, roc_auc_score)
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import KFold, StratifiedKFold, cross_val_score
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -107,8 +107,31 @@ class BaseModel(ABC):
     def _objective(self, trial: optuna.Trial, X_train, y_train):
         params = self.suggest_params(trial)
         model = self.build_model(params)
-        scores = cross_val_score(model, X_train, y_train, cv=5, scoring=self.scoring)
+        cv_strategy = self._get_cv_strategy(y_train)
+        scores = cross_val_score(
+            model, X_train, y_train, cv=cv_strategy, scoring=self.scoring
+        )
         return scores.mean()
+
+    def _get_cv_strategy(self, y_train):
+        n_samples = len(y_train)
+        if n_samples < 2:
+            raise ValueError("Need at least 2 samples for cross-validation")
+
+        n_splits = min(5, n_samples)
+        if self.task_type != "classification":
+            return KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+        labels, counts = np.unique(y_train, return_counts=True)
+        if len(labels) <= 1:
+            raise ValueError("Need at least 2 classes for classification")
+
+        min_class_count = counts.min()
+        if min_class_count >= n_splits:
+            return StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+        fallback_splits = max(2, min(min_class_count, n_splits))
+        return KFold(n_splits=fallback_splits, shuffle=True, random_state=42)
 
     def optimize(self, X_train, y_train):
         study = optuna.create_study(direction=self.direction)
@@ -148,9 +171,12 @@ class BaseModel(ABC):
             )
             results = {}
             for name, fn in suite.items():
-                value = fn(y_true, y_pred, proba=y_proba)
-                if value is not None:
-                    results[name] = value
+                try:
+                    value = fn(y_true, y_pred, proba=y_proba)
+                    if value is not None:
+                        results[name] = value
+                except ValueError:
+                    continue
             return results
 
         scorer = get_scorer(self.scoring)
@@ -158,16 +184,24 @@ class BaseModel(ABC):
         return {self.metric: score}
 
     def _log_classification_plots(self, y_true, y_pred, y_proba, plots_dir: Path):
+        unique_labels = np.unique(y_true)
+        num_classes = len(unique_labels)
+
+        if num_classes > 30:
+            print(
+                "Skipping classification plots: too many classes "
+                f"({num_classes} classes)"
+            )
+            return
+
         fig, ax = plt.subplots(figsize=(8, 6))
         ConfusionMatrixDisplay.from_predictions(y_true, y_pred, ax=ax)
         ax.set_title(f"{self.model_name} — Confusion Matrix")
         fig.savefig(plots_dir / "confusion_matrix.png", dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-        if y_proba is not None:
-            # Detect positive label for string/non-binary targets
-            unique_labels = np.unique(y_true)
-            pos_label = unique_labels[-1] if len(unique_labels) == 2 else None
+        if y_proba is not None and num_classes == 2:
+            pos_label = unique_labels[-1]
 
             fig, ax = plt.subplots(figsize=(8, 6))
             RocCurveDisplay.from_predictions(
