@@ -147,10 +147,23 @@ def main() -> None:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     except RuntimeError as e:
         if "CUDA out of memory" in str(e) and cfg.use_4bit:
-            print(f"4-bit loading OOM, falling back to 8-bit: {e}")
+            print(f"4-bit loading OOM, falling back to 8-bit with CPU offload: {e}")
+            # Clear old quantization config and device_map
+            model_kwargs.pop("quantization_config", None)
+            model_kwargs.pop("device_map", None)
+            # Set up 8-bit with CPU offload
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_8bit=True,
+                llm_int8_enable_fp32_cpu_offload=True,
             )
+            # Configure CPU offload via device_map
+            cfg.offload_dir.mkdir(parents=True, exist_ok=True)
+            model_kwargs["device_map"] = "auto"
+            model_kwargs["offload_folder"] = str(cfg.offload_dir)
+            model_kwargs["max_memory"] = {
+                0: f"{cfg.gpu_max_memory_gib}GiB",
+                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
+            }
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         else:
             raise
