@@ -112,7 +112,6 @@ def main() -> None:
     dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
     model_kwargs = {
         "trust_remote_code": True,
-        "dtype": dtype,
     }
 
     if cfg.bnb_compute_dtype == "float16":
@@ -130,19 +129,32 @@ def main() -> None:
                 bnb_4bit_quant_type=cfg.bnb_quant_type,
                 bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
             )
-            model_kwargs["device_map"] = {"": 0}
+            model_kwargs["device_map"] = "auto"
         else:
             model_kwargs["device_map"] = "auto"
+            model_kwargs["dtype"] = dtype
+            if cfg.use_cpu_offload:
+                cfg.offload_dir.mkdir(parents=True, exist_ok=True)
+                model_kwargs["offload_folder"] = str(cfg.offload_dir)
+                model_kwargs["max_memory"] = {
+                    0: f"{cfg.gpu_max_memory_gib}GiB",
+                    "cpu": f"{cfg.cpu_max_memory_gib}GiB",
+                }
+    else:
+        model_kwargs["dtype"] = dtype
 
-        if cfg.use_cpu_offload and not cfg.use_4bit:
-            cfg.offload_dir.mkdir(parents=True, exist_ok=True)
-            model_kwargs["offload_folder"] = str(cfg.offload_dir)
-            model_kwargs["max_memory"] = {
-                0: f"{cfg.gpu_max_memory_gib}GiB",
-                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
-            }
+    try:
+        model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+    except RuntimeError as e:
+        if "CUDA out of memory" in str(e) and cfg.use_4bit:
+            print(f"4-bit loading OOM, falling back to 8-bit: {e}")
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_8bit=True,
+            )
+            model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+        else:
+            raise
 
-    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     model.config.use_cache = False
 
     if cfg.use_4bit:
