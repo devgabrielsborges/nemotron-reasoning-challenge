@@ -121,47 +121,31 @@ def main() -> None:
     else:
         bnb_compute_dtype = torch.bfloat16
 
+    # Always use 8-bit quantization with aggressive CPU offload for 30B model
     if torch.cuda.is_available():
-        if cfg.use_4bit:
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=bnb_compute_dtype,
-                bnb_4bit_quant_type=cfg.bnb_quant_type,
-                bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
-            )
-            model_kwargs["device_map"] = "auto"
-        else:
-            model_kwargs["device_map"] = "auto"
-            model_kwargs["dtype"] = dtype
-            if cfg.use_cpu_offload:
-                cfg.offload_dir.mkdir(parents=True, exist_ok=True)
-                model_kwargs["offload_folder"] = str(cfg.offload_dir)
-                model_kwargs["max_memory"] = {
-                    0: f"{cfg.gpu_max_memory_gib}GiB",
-                    "cpu": f"{cfg.cpu_max_memory_gib}GiB",
-                }
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_8bit=True,
+            llm_int8_enable_fp32_cpu_offload=True,
+        )
+        # Aggressively offload to CPU: keep only 15GiB on GPU, rest on CPU
+        cfg.offload_dir.mkdir(parents=True, exist_ok=True)
+        model_kwargs["device_map"] = "auto"
+        model_kwargs["offload_folder"] = str(cfg.offload_dir)
+        model_kwargs["max_memory"] = {
+            0: "15GiB",  # Conservative GPU limit for 24GB card
+            "cpu": f"{cfg.cpu_max_memory_gib}GiB",
+        }
     else:
         model_kwargs["dtype"] = dtype
 
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     except RuntimeError as e:
-        if "CUDA out of memory" in str(e) and cfg.use_4bit:
-            print(f"4-bit loading OOM, falling back to 8-bit with CPU offload: {e}")
-            # Clear old quantization config and device_map
-            model_kwargs.pop("quantization_config", None)
-            model_kwargs.pop("device_map", None)
-            # Set up 8-bit with CPU offload
-            model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_8bit=True,
-                llm_int8_enable_fp32_cpu_offload=True,
-            )
-            # Configure CPU offload via device_map
-            cfg.offload_dir.mkdir(parents=True, exist_ok=True)
-            model_kwargs["device_map"] = "auto"
-            model_kwargs["offload_folder"] = str(cfg.offload_dir)
+        print(f"Model loading failed: {e}")
+        if torch.cuda.is_available():
+            print("Retrying with even more conservative GPU memory limit (10GiB)...")
             model_kwargs["max_memory"] = {
-                0: f"{cfg.gpu_max_memory_gib}GiB",
+                0: "10GiB",
                 "cpu": f"{cfg.cpu_max_memory_gib}GiB",
             }
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
@@ -170,7 +154,8 @@ def main() -> None:
 
     model.config.use_cache = False
 
-    if cfg.use_4bit:
+    # Always prepare quantized model for training (we use 8-bit on CUDA)
+    if torch.cuda.is_available():
         model = prepare_model_for_kbit_training(model)
 
     if torch.cuda.is_available():
