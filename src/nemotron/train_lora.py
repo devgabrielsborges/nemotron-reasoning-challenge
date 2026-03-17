@@ -1,4 +1,5 @@
 import random
+import os
 
 import kagglehub
 import pandas as pd
@@ -6,8 +7,7 @@ import torch
 from dotenv import load_dotenv
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.utils.data import Dataset
-from transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,
-                          TrainingArguments)
+from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
 
 from nemotron.config import NemotronConfig
 
@@ -78,6 +78,10 @@ class SFTDataset(Dataset):
 def main() -> None:
     load_dotenv(override=True)
     cfg = NemotronConfig.from_env()
+
+    if cfg.cuda_visible_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = cfg.cuda_visible_devices
+
     set_seed(cfg.random_seed)
 
     if not cfg.train_csv.exists():
@@ -99,13 +103,26 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        trust_remote_code=True,
-        torch_dtype=torch_dtype,
-        device_map="auto" if torch.cuda.is_available() else None,
-    )
+    dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    model_kwargs = {
+        "trust_remote_code": True,
+        "dtype": dtype,
+    }
+    if torch.cuda.is_available():
+        model_kwargs["device_map"] = "auto"
+        if cfg.use_cpu_offload:
+            cfg.offload_dir.mkdir(parents=True, exist_ok=True)
+            model_kwargs["offload_folder"] = str(cfg.offload_dir)
+            model_kwargs["max_memory"] = {
+                0: f"{cfg.gpu_max_memory_gib}GiB",
+                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
+            }
+
+    model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+    model.config.use_cache = False
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     lora_config = LoraConfig(
         r=cfg.lora_rank,
@@ -146,6 +163,7 @@ def main() -> None:
         report_to=[],
         bf16=torch.cuda.is_available(),
         fp16=False,
+        dataloader_pin_memory=False,
     )
 
     trainer = Trainer(

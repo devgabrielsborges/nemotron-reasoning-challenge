@@ -26,6 +26,11 @@ class NemotronConfig:
     warmup_ratio: float
     logging_steps: int
     save_steps: int
+    cuda_visible_devices: str | None
+    gpu_max_memory_gib: int
+    cpu_max_memory_gib: int
+    use_cpu_offload: bool
+    offload_dir: Path
 
     @classmethod
     def from_env(cls) -> "NemotronConfig":
@@ -69,4 +74,10 @@ class NemotronConfig:
             warmup_ratio=float(os.getenv("NEMOTRON_WARMUP_RATIO", "0.03")),
             logging_steps=int(os.getenv("NEMOTRON_LOGGING_STEPS", "10")),
             save_steps=int(os.getenv("NEMOTRON_SAVE_STEPS", "200")),
+            cuda_visible_devices=os.getenv("NEMOTRON_CUDA_VISIBLE_DEVICES", "0"),
+            gpu_max_memory_gib=int(os.getenv("NEMOTRON_GPU_MAX_MEMORY_GIB", "20")),
+            cpu_max_memory_gib=int(os.getenv("NEMOTRON_CPU_MAX_MEMORY_GIB", "120")),
+            use_cpu_offload=os.getenv("NEMOTRON_USE_CPU_OFFLOAD", "true").lower()
+            in ("true", "1", "yes"),
+            offload_dir=Path(os.getenv("NEMOTRON_OFFLOAD_DIR", "artifacts/offload")),
         )

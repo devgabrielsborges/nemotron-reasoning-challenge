@@ -59,6 +59,8 @@ train-all:
 
 nemotron-train:
 	@set -a && [ -f .env ] && . ./.env && set +a; \
+	CUDA_VISIBLE_DEVICES=$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0}} \
+	PYTORCH_CUDA_ALLOC_CONF=$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True} \
 	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora
 
 nemotron-package:
