@@ -5,9 +5,15 @@ import kagglehub
 import pandas as pd
 import torch
 from dotenv import load_dotenv
-from peft import LoraConfig, TaskType, get_peft_model
+from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from torch.utils.data import Dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer, Trainer, TrainingArguments
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    Trainer,
+    TrainingArguments,
+)
 
 from nemotron.config import NemotronConfig
 
@@ -108,9 +114,27 @@ def main() -> None:
         "trust_remote_code": True,
         "dtype": dtype,
     }
+
+    if cfg.bnb_compute_dtype == "float16":
+        bnb_compute_dtype = torch.float16
+    elif cfg.bnb_compute_dtype == "float32":
+        bnb_compute_dtype = torch.float32
+    else:
+        bnb_compute_dtype = torch.bfloat16
+
     if torch.cuda.is_available():
-        model_kwargs["device_map"] = "auto"
-        if cfg.use_cpu_offload:
+        if cfg.use_4bit:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=bnb_compute_dtype,
+                bnb_4bit_quant_type=cfg.bnb_quant_type,
+                bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
+            )
+            model_kwargs["device_map"] = {"": 0}
+        else:
+            model_kwargs["device_map"] = "auto"
+
+        if cfg.use_cpu_offload and not cfg.use_4bit:
             cfg.offload_dir.mkdir(parents=True, exist_ok=True)
             model_kwargs["offload_folder"] = str(cfg.offload_dir)
             model_kwargs["max_memory"] = {
@@ -120,6 +144,9 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     model.config.use_cache = False
+
+    if cfg.use_4bit:
+        model = prepare_model_for_kbit_training(model)
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()

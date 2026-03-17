@@ -80,7 +80,7 @@ nemotron-package:
 	@set -a && [ -f .env ] && . ./.env && set +a; \
 	PYTHONPATH=src uv run --python 3.11 -m nemotron.package_submission
 
-nemotron-all: nemotron-train nemotron-package
+nemotron-all: nemotron-train-lowmem nemotron-package
 
 clean:
 	docker compose down -v

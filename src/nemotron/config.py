@@ -28,6 +28,10 @@ class NemotronConfig:
     logging_steps: int
     save_steps: int
     optimizer: str
+    use_4bit: bool
+    bnb_compute_dtype: str
+    bnb_quant_type: str
+    bnb_use_double_quant: bool
     cuda_visible_devices: str | None
     gpu_max_memory_gib: int
     cpu_max_memory_gib: int
@@ -78,6 +82,14 @@ class NemotronConfig:
             logging_steps=int(os.getenv("NEMOTRON_LOGGING_STEPS", "10")),
             save_steps=int(os.getenv("NEMOTRON_SAVE_STEPS", "200")),
             optimizer=os.getenv("NEMOTRON_OPTIMIZER", "adafactor"),
+            use_4bit=os.getenv("NEMOTRON_USE_4BIT", "true").lower()
+            in ("true", "1", "yes"),
+            bnb_compute_dtype=os.getenv("NEMOTRON_BNB_COMPUTE_DTYPE", "bfloat16"),
+            bnb_quant_type=os.getenv("NEMOTRON_BNB_QUANT_TYPE", "nf4"),
+            bnb_use_double_quant=os.getenv(
+                "NEMOTRON_BNB_USE_DOUBLE_QUANT", "true"
+            ).lower()
+            in ("true", "1", "yes"),
             cuda_visible_devices=os.getenv("NEMOTRON_CUDA_VISIBLE_DEVICES", "0"),
             gpu_max_memory_gib=int(os.getenv("NEMOTRON_GPU_MAX_MEMORY_GIB", "20")),
             cpu_max_memory_gib=int(os.getenv("NEMOTRON_CPU_MAX_MEMORY_GIB", "120")),
