@@ -124,10 +124,16 @@ def main() -> None:
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    lora_targets = [
+        item.strip() for item in cfg.lora_target_modules.split(",") if item.strip()
+    ]
+    if not lora_targets:
+        raise ValueError("NEMOTRON_LORA_TARGET_MODULES cannot be empty.")
+
     lora_config = LoraConfig(
         r=cfg.lora_rank,
         lora_alpha=cfg.lora_alpha,
-        target_modules=r".*\.(in_proj|out_proj|up_proj|down_proj)$",
+        target_modules=lora_targets,
         lora_dropout=cfg.lora_dropout,
         bias="none",
         task_type=TaskType.CAUSAL_LM,
@@ -164,6 +170,7 @@ def main() -> None:
         bf16=torch.cuda.is_available(),
         fp16=False,
         dataloader_pin_memory=False,
+        optim=cfg.optimizer,
     )
 
     trainer = Trainer(

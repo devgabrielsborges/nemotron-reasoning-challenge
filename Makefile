@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "Nemotron Competition"
 	@echo "  make nemotron-train    Train LoRA adapter for Nemotron"
+	@echo "  make nemotron-train-lowmem  Low-memory training profile"
 	@echo "  make nemotron-package  Build submission.zip from adapter"
 	@echo "  make nemotron-all      Train + package submission"
 	@echo ""
@@ -59,6 +60,18 @@ train-all:
 
 nemotron-train:
 	@set -a && [ -f .env ] && . ./.env && set +a; \
+	CUDA_VISIBLE_DEVICES=$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0}} \
+	PYTORCH_CUDA_ALLOC_CONF=$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True} \
+	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora
+
+nemotron-train-lowmem:
+	@set -a && [ -f .env ] && . ./.env && set +a; \
+	NEMOTRON_LORA_RANK=$${NEMOTRON_LORA_RANK:-4} \
+	NEMOTRON_LORA_TARGET_MODULES=$${NEMOTRON_LORA_TARGET_MODULES:-out_proj} \
+	NEMOTRON_MAX_SEQ_LEN=$${NEMOTRON_MAX_SEQ_LEN:-384} \
+	NEMOTRON_GRAD_ACCUM=$${NEMOTRON_GRAD_ACCUM:-16} \
+	NEMOTRON_SUBSAMPLE_SIZE=$${NEMOTRON_SUBSAMPLE_SIZE:-1000} \
+	NEMOTRON_OPTIMIZER=$${NEMOTRON_OPTIMIZER:-adafactor} \
 	CUDA_VISIBLE_DEVICES=$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0}} \
 	PYTORCH_CUDA_ALLOC_CONF=$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True} \
 	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora

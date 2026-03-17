@@ -17,6 +17,7 @@ class NemotronConfig:
     lora_rank: int
     lora_alpha: int
     lora_dropout: float
+    lora_target_modules: str
     max_seq_len: int
     num_epochs: int
     grad_accum_steps: int
@@ -26,6 +27,7 @@ class NemotronConfig:
     warmup_ratio: float
     logging_steps: int
     save_steps: int
+    optimizer: str
     cuda_visible_devices: str | None
     gpu_max_memory_gib: int
     cpu_max_memory_gib: int
@@ -65,6 +67,7 @@ class NemotronConfig:
             lora_rank=lora_rank,
             lora_alpha=int(os.getenv("NEMOTRON_LORA_ALPHA", "16")),
             lora_dropout=float(os.getenv("NEMOTRON_LORA_DROPOUT", "0.05")),
+            lora_target_modules=os.getenv("NEMOTRON_LORA_TARGET_MODULES", "out_proj"),
             max_seq_len=int(os.getenv("NEMOTRON_MAX_SEQ_LEN", "1024")),
             num_epochs=int(os.getenv("NEMOTRON_NUM_EPOCHS", "1")),
             grad_accum_steps=int(os.getenv("NEMOTRON_GRAD_ACCUM", "4")),
@@ -74,6 +77,7 @@ class NemotronConfig:
             warmup_ratio=float(os.getenv("NEMOTRON_WARMUP_RATIO", "0.03")),
             logging_steps=int(os.getenv("NEMOTRON_LOGGING_STEPS", "10")),
             save_steps=int(os.getenv("NEMOTRON_SAVE_STEPS", "200")),
+            optimizer=os.getenv("NEMOTRON_OPTIMIZER", "adafactor"),
             cuda_visible_devices=os.getenv("NEMOTRON_CUDA_VISIBLE_DEVICES", "0"),
             gpu_max_memory_gib=int(os.getenv("NEMOTRON_GPU_MAX_MEMORY_GIB", "20")),
             cpu_max_memory_gib=int(os.getenv("NEMOTRON_CPU_MAX_MEMORY_GIB", "120")),
