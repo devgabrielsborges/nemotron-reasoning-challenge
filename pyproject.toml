@@ -16,9 +16,12 @@ dependencies = [
     "pandas>=2.3.3",
     "psycopg2-binary>=2.9.11",
     "python-dotenv>=1.2.2",
+    "peft>=0.17.0",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "seaborn>=0.13.2",
     "setuptools>=69.0.0",
+    "torch>=2.8.0",
+    "transformers>=4.57.0",
     "xgboost>=3.2.0",
 ]

@@ -1,170 +1,83 @@
-# Base Kaggle Competition Template
+# NVIDIA Nemotron Model Reasoning Challenge Starter
 
-A ready-to-use ML experiment pipeline for Kaggle competitions. Download data, preprocess, train multiple models with automated hyperparameter tuning (Optuna), and track everything in MLflow — all orchestrated through a simple Makefile.
+This repository is adapted for the Kaggle **NVIDIA Nemotron Model Reasoning Challenge**.
 
-## Stack
+The competition expects a `submission.zip` containing a compatible LoRA adapter for **Nemotron-3-Nano-30B**, including `adapter_config.json`, with **LoRA rank <= 32**.
 
-- **Python 3.13+** managed with [uv](https://github.com/astral-sh/uv)
-- **MLflow** for experiment tracking and artifact storage
-- **Optuna** for Bayesian hyperparameter optimization (50 trials, 5-fold CV)
-- **Docker Compose** stack: PostgreSQL (backend store) + MinIO (S3-compatible artifact store) + MLflow server
-- **scikit-learn**, **XGBoost**, **pandas**, **NumPy**, **matplotlib**
+## What is implemented
 
-## Project Structure
+- `src/nemotron/train_lora.py`: supervised LoRA fine-tuning pipeline based on `prompt` + `answer` data.
+- `src/nemotron/package_submission.py`: packages adapter files into competition-ready `submission.zip` and validates `adapter_config.json`.
+- `src/nemotron/config.py`: centralized environment-driven configuration with competition guardrails.
 
-```
-├── data/
-│   ├── raw/                # Downloaded CSV files
-│   └── processed/          # Preprocessed NumPy arrays
-├── notebooks/
-│   └── eda.ipynb           # Exploratory data analysis
-├── src/
-│   ├── config/
-│   │   └── mlflow_init.py  # MLflow experiment setup
-│   ├── models/
-│   │   ├── model.py        # BaseModel + training loop
-│   │   ├── logistic_regression.py
-│   │   ├── random_forest.py
-│   │   ├── svm.py
-│   │   ├── xgboost_.py
-│   │   ├── gradient_boosting.py
-│   │   └── knn.py
-│   ├── preprocessing/
-│   │   └── preprocess.py   # Feature engineering pipeline
-│   └── utils/
-│       └── download_dataset.py
-├── docker-compose.yml
-├── Dockerfile.mlflow
-├── Makefile
-├── pyproject.toml
-└── .env.example
-```
+The previous scikit-learn/MLflow template remains available under `src/models` for experimentation, but it is **not** the primary submission path for this challenge.
 
 ## Quick Start
 
-### 1. Configure environment
+### 1) Configure env
 
 ```bash
 cp .env.example .env
-# Edit .env to match your competition
 ```
 
-| Variable | Description | Example |
-|---|---|---|
-| `KAGGLE_COMPETITION_NAME` | Kaggle competition slug | `playground-series-s6e2` |
-| `TARGET_COLUMN` | Name of the target column | `Heart Disease` |
-| `METRIC` | Optimization metric | `accuracy` |
-| `TASK_TYPE` | `classification` or `regression` | `classification` |
-| `MLFLOW_TRACKING_URI` | MLflow server URL | `http://localhost:5000` |
+Set or confirm these key values in `.env`:
 
-### 2. Install dependencies
+- `KAGGLE_COMPETITION_NAME=nvidia-nemotron-model-reasoning-challenge`
+- `TARGET_COLUMN=answer`
+- `PROMPT_COLUMN=prompt`
+- `NEMOTRON_LORA_RANK=32` (must be <= 32)
+- Optional `NEMOTRON_MODEL_PATH=/path/to/local/model` (otherwise `kagglehub` downloads)
+
+### 2) Install dependencies
 
 ```bash
 uv sync
 ```
 
-### 3. Start infrastructure
-
-```bash
-make up
-```
-
-This spins up PostgreSQL, MinIO, and the MLflow server.
-
-| Service | URL | Credentials |
-|---|---|---|
-| MLflow UI | http://localhost:5000 | — |
-| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
-
-### 4. Download and preprocess data
+### 3) Download data
 
 ```bash
 make init
 ```
 
-> **Note:** Requires Kaggle credentials configured at `~/.kaggle/kaggle.json`.
-
-### 5. Train models
+### 4) Train LoRA adapter
 
 ```bash
-make train-random_forest    # single model
-make train-all              # all models sequentially
+make nemotron-train
 ```
 
-Available models: `logistic_regression`, `random_forest`, `svm`, `xgboost_`, `gradient_boosting`, `knn`.
+Artifacts are written to `NEMOTRON_OUTPUT_DIR` (default: `artifacts/adapter`).
 
-### 6. Tear down
+### 5) Create submission zip
 
 ```bash
-make down     # stop services
-make clean    # stop services and delete volumes
+make nemotron-package
 ```
 
-## Available Models
+This creates `NEMOTRON_SUBMISSION_PATH` (default: `artifacts/submission.zip`) and verifies required adapter metadata.
 
-Each model inherits from `BaseModel` and defines its own Optuna search space. The training loop automatically handles cross-validation, metric logging, and artifact storage.
+### 6) One-command run
 
-| Model | Classification | Regression |
-|---|---|---|
-| Logistic Regression | LogisticRegression | — |
-| Random Forest | RandomForestClassifier | RandomForestRegressor |
-| SVM | SVC | SVR |
-| XGBoost | XGBClassifier | XGBRegressor |
-| Gradient Boosting | GradientBoostingClassifier | GradientBoostingRegressor |
-| KNN | KNeighborsClassifier | KNeighborsRegressor |
-
-## Preprocessing
-
-The pipeline in `src/preprocessing/preprocess.py` applies:
-
-- **Numerical features:** KNN imputation + standard scaling
-- **Categorical features:** most-frequent imputation + one-hot encoding
-
-Outputs are saved as `.npy` arrays under `data/processed/`.
-
-## MLflow Tracking
-
-Every training run logs:
-
-- Model type, task type, optimization metric, and number of trials
-- Best hyperparameters from Optuna
-- Cross-validation score and full test-set metrics
-- Trained model artifact (sklearn format)
-- Plots: confusion matrix, ROC curve, precision-recall curve (classification) or predicted-vs-actual, residuals (regression), plus Optuna optimization history and parameter importances
-
-## Adding a New Model
-
-1. Create `src/models/my_model.py`
-2. Subclass `BaseModel` and implement `build_model(params)` and `suggest_params(trial)`
-3. Add a `__main__` block that instantiates and calls `.run()`
-4. Add the model name to the `MODELS` list in the `Makefile`
-
-```python
-from src.models.model import BaseModel
-
-class MyModel(BaseModel):
-    name = "my_model"
-
-    def build_model(self, params):
-        ...
-
-    def suggest_params(self, trial):
-        ...
-
-if __name__ == "__main__":
-    MyModel().run()
+```bash
+make nemotron-all
 ```
 
-## Makefile Reference
+## Nemotron environment variables
 
-```
-make help           Show all available commands
-make up             Start Postgres + MinIO + MLflow
-make down           Stop all services
-make restart        Restart all services
-make logs           Tail service logs
-make clean          Stop services and delete volumes
-make init           Download dataset + run preprocessing
-make train-<model>  Train a single model
-make train-all      Train all models sequentially
+Defined in `.env.example`:
+
+- Data/model paths: `NEMOTRON_TRAIN_CSV`, `NEMOTRON_MODEL_PATH`, `NEMOTRON_KAGGLE_MODEL_HANDLE`
+- Output paths: `NEMOTRON_OUTPUT_DIR`, `NEMOTRON_SUBMISSION_PATH`
+- Training: `NEMOTRON_MAX_SEQ_LEN`, `NEMOTRON_NUM_EPOCHS`, `NEMOTRON_GRAD_ACCUM`, `NEMOTRON_LR`, `NEMOTRON_BATCH_SIZE`
+- LoRA: `NEMOTRON_LORA_RANK`, `NEMOTRON_LORA_ALPHA`, `NEMOTRON_LORA_DROPOUT`
+- Optional dev speed: `NEMOTRON_SUBSAMPLE_SIZE`
+
+## Make targets
+
+```bash
+make help
+make init
+make nemotron-train
+make nemotron-package
+make nemotron-all
 ```

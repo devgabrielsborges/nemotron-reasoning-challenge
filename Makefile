@@ -18,6 +18,11 @@ help:
 	@echo "  make train-<model>  Train a single model (e.g. make train-random_forest)"
 	@echo "  make train-all      Train all models sequentially"
 	@echo ""
+	@echo "Nemotron Competition"
+	@echo "  make nemotron-train    Train LoRA adapter for Nemotron"
+	@echo "  make nemotron-package  Build submission.zip from adapter"
+	@echo "  make nemotron-all      Train + package submission"
+	@echo ""
 	@echo "Available models: $(MODELS)"
 
 up:
@@ -51,6 +56,16 @@ train-all:
 		set -a && [ -f .env ] && . ./.env && set +a; \
 		uv run --python 3.11 src/models/$$model.py; \
 	done
+
+nemotron-train:
+	@set -a && [ -f .env ] && . ./.env && set +a; \
+	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora
+
+nemotron-package:
+	@set -a && [ -f .env ] && . ./.env && set +a; \
+	PYTHONPATH=src uv run --python 3.11 -m nemotron.package_submission
+
+nemotron-all: nemotron-train nemotron-package
 
 clean:
 	docker compose down -v
