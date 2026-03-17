@@ -121,14 +121,15 @@ def main() -> None:
     else:
         bnb_compute_dtype = torch.bfloat16
 
-    # Always use 8-bit quantization with aggressive CPU offload for 30B model
+    # Always use 8-bit quantization with CPU offload for 30B model
     if torch.cuda.is_available():
         model_kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_8bit=True,
             llm_int8_enable_fp32_cpu_offload=True,
         )
-        # Simplest device_map: keep all on GPU 0, 8-bit handles CPU offload internally
-        model_kwargs["device_map"] = {"": 0}
+        # Load on CPU first to avoid GPU OOM, then move during training
+        model_kwargs["device_map"] = "cpu"
+        model_kwargs["low_cpu_mem_usage"] = True
     else:
         model_kwargs["dtype"] = dtype
 
@@ -137,11 +138,19 @@ def main() -> None:
     except RuntimeError as e:
         print(f"Model loading failed: {e}")
         if torch.cuda.is_available():
-            print("Retrying without device_map...")
-            model_kwargs.pop("device_map", None)
+            print("Retrying with bfloat16 on CPU (no quantization)...")
+            # Fall back to standard precision on CPU
+            model_kwargs.pop("quantization_config", None)
+            model_kwargs["device_map"] = "cpu"
+            model_kwargs["torch_dtype"] = torch.bfloat16
+            model_kwargs["low_cpu_mem_usage"] = True
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         else:
             raise
+
+    # Move model to GPU for training
+    if torch.cuda.is_available():
+        model = model.to(0)  # Move to GPU 0
 
     model.config.use_cache = False
 
