@@ -133,24 +133,28 @@ def main() -> None:
             )
             for gpu_idx in range(gpu_count)
         }
-        max_memory = {
-            gpu_idx: f"{cfg.gpu_max_memory_gib}GiB" for gpu_idx in range(gpu_count)
-        }
-        max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
-
-        # Mixed-memory GPUs (e.g., 24GB + 16GB) are unstable with balanced_low_0
-        # for this model. Bias placement away from the smallest GPU.
         min_gpu_idx = min(gpu_mem_gib, key=gpu_mem_gib.get)
         max_gpu_idx = max(gpu_mem_gib, key=gpu_mem_gib.get)
         is_heterogeneous = gpu_count > 1 and (
             gpu_mem_gib[min_gpu_idx] <= gpu_mem_gib[max_gpu_idx] - 6
         )
-        if is_heterogeneous:
-            max_memory[min_gpu_idx] = "2GiB"
-            max_memory[max_gpu_idx] = f"{max(cfg.gpu_max_memory_gib, 12)}GiB"
+
+        if use_4bit_for_load:
+            # 4-bit loading is most stable when all visible GPUs are used with
+            # dynamic physical-memory caps and reserved headroom for allocator spikes.
+            max_memory = {
+                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 3))}GiB"
+                for gpu_idx in range(gpu_count)
+            }
             device_map_strategy = "auto"
         else:
-            device_map_strategy = "balanced_low_0" if gpu_count > 1 else "auto"
+            max_memory = {
+                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 3))}GiB"
+                for gpu_idx in range(gpu_count)
+            }
+            device_map_strategy = "auto" if gpu_count > 1 else "auto"
+
+        max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
 
         print(
             "CUDA placement:",
