@@ -1,5 +1,6 @@
 import random
 import os
+import gc
 
 import kagglehub
 import pandas as pd
@@ -126,11 +127,30 @@ def main() -> None:
     use_4bit_for_load = cfg.use_4bit and not cfg.use_cpu_offload
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
+        gpu_mem_gib = {
+            gpu_idx: int(
+                torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)
+            )
+            for gpu_idx in range(gpu_count)
+        }
         max_memory = {
             gpu_idx: f"{cfg.gpu_max_memory_gib}GiB" for gpu_idx in range(gpu_count)
         }
         max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
-        device_map_strategy = "balanced_low_0" if gpu_count > 1 else "auto"
+
+        # Mixed-memory GPUs (e.g., 24GB + 16GB) are unstable with balanced_low_0
+        # for this model. Bias placement away from the smallest GPU.
+        min_gpu_idx = min(gpu_mem_gib, key=gpu_mem_gib.get)
+        max_gpu_idx = max(gpu_mem_gib, key=gpu_mem_gib.get)
+        is_heterogeneous = gpu_count > 1 and (
+            gpu_mem_gib[min_gpu_idx] <= gpu_mem_gib[max_gpu_idx] - 6
+        )
+        if is_heterogeneous:
+            max_memory[min_gpu_idx] = "2GiB"
+            max_memory[max_gpu_idx] = f"{max(cfg.gpu_max_memory_gib, 12)}GiB"
+            device_map_strategy = "auto"
+        else:
+            device_map_strategy = "balanced_low_0" if gpu_count > 1 else "auto"
 
         print(
             "CUDA placement:",
@@ -138,6 +158,8 @@ def main() -> None:
                 "visible_gpus": gpu_count,
                 "device_map": device_map_strategy,
                 "max_memory": max_memory,
+                "gpu_mem_gib": gpu_mem_gib,
+                "heterogeneous": is_heterogeneous,
                 "use_4bit": cfg.use_4bit,
                 "effective_4bit": use_4bit_for_load,
                 "use_cpu_offload": cfg.use_cpu_offload,
@@ -184,6 +206,10 @@ def main() -> None:
 
         print(f"Initial model loading failed, retrying with safer settings: {e}")
 
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         if use_4bit_for_load:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_8bit=True,
@@ -192,14 +218,23 @@ def main() -> None:
 
         gpu_count = torch.cuda.device_count()
         if gpu_count > 1:
+            gpu_mem_gib = {
+                gpu_idx: int(
+                    torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)
+                )
+                for gpu_idx in range(gpu_count)
+            }
+            min_gpu_idx = min(gpu_mem_gib, key=gpu_mem_gib.get)
+            max_gpu_idx = max(gpu_mem_gib, key=gpu_mem_gib.get)
             safer_max_memory = {
-                0: f"{max(10, cfg.gpu_max_memory_gib + 2)}GiB",
+                max_gpu_idx: f"{max(12, cfg.gpu_max_memory_gib + 2)}GiB",
+                min_gpu_idx: "1GiB",
                 "cpu": f"{cfg.cpu_max_memory_gib}GiB",
             }
             model_kwargs["device_map"] = "auto"
             model_kwargs["max_memory"] = safer_max_memory
             print(
-                "Retrying with single-GPU placement on GPU 0 + CPU offload:",
+                "Retrying with dominant-GPU placement + CPU offload:",
                 safer_max_memory,
             )
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
