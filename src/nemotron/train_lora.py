@@ -196,10 +196,15 @@ def main() -> None:
 
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, TypeError) as e:
+        is_int8_dispatch_bug = (
+            "Int8Params.__new__() got an unexpected keyword argument '_is_hf_initialized'"
+            in str(e)
+        )
         can_retry = torch.cuda.is_available() and (
             "CUDA out of memory" in str(e)
             or "dispatched on the CPU or the disk" in str(e)
+            or is_int8_dispatch_bug
         )
         if not can_retry:
             raise
@@ -210,10 +215,25 @@ def main() -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        if use_4bit_for_load:
+        if is_int8_dispatch_bug:
+            print(
+                "Detected 8-bit dispatch incompatibility; retrying with 4-bit "
+                "quantization and without CPU offload."
+            )
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_8bit=True,
-                llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=bnb_compute_dtype,
+                bnb_4bit_quant_type=cfg.bnb_quant_type,
+                bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
+            )
+            model_kwargs.pop("offload_folder", None)
+
+        elif use_4bit_for_load:
+            model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=bnb_compute_dtype,
+                bnb_4bit_quant_type=cfg.bnb_quant_type,
+                bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
             )
 
         gpu_count = torch.cuda.device_count()
