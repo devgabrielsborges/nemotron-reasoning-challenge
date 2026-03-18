@@ -218,19 +218,11 @@ def main() -> None:
 
         gpu_count = torch.cuda.device_count()
         if gpu_count > 1:
-            gpu_mem_gib = {
-                gpu_idx: int(
-                    torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)
-                )
+            safer_max_memory = {
+                gpu_idx: f"{max(1, int(torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)) - 3)}GiB"
                 for gpu_idx in range(gpu_count)
             }
-            min_gpu_idx = min(gpu_mem_gib, key=gpu_mem_gib.get)
-            max_gpu_idx = max(gpu_mem_gib, key=gpu_mem_gib.get)
-            safer_max_memory = {
-                max_gpu_idx: f"{max(12, cfg.gpu_max_memory_gib + 2)}GiB",
-                min_gpu_idx: "1GiB",
-                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
-            }
+            safer_max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
             model_kwargs["device_map"] = "auto"
             model_kwargs["max_memory"] = safer_max_memory
             print(
@@ -241,7 +233,9 @@ def main() -> None:
         else:
             if "max_memory" in model_kwargs:
                 tightened_max_memory = dict(model_kwargs["max_memory"])
-                tightened_max_memory[0] = f"{max(6, cfg.gpu_max_memory_gib - 2)}GiB"
+                tightened_max_memory[0] = (
+                    f"{max(1, int(torch.cuda.get_device_properties(0).total_memory / (1024**3)) - 3)}GiB"
+                )
                 model_kwargs["max_memory"] = tightened_max_memory
                 print("Retrying with tightened max_memory:", tightened_max_memory)
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
