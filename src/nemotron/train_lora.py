@@ -152,9 +152,8 @@ def main() -> None:
                 gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 6))}GiB"
                 for gpu_idx in range(gpu_count)
             }
+            max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
             device_map_strategy = "auto" if gpu_count > 1 else "auto"
-
-        max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
 
         print(
             "CUDA placement:",
@@ -205,9 +204,10 @@ def main() -> None:
             "Int8Params.__new__() got an unexpected keyword argument '_is_hf_initialized'"
             in str(e)
         )
+        is_cpu_or_disk_dispatch_error = "dispatched on the CPU or the disk" in str(e)
         can_retry = torch.cuda.is_available() and (
             "CUDA out of memory" in str(e)
-            or "dispatched on the CPU or the disk" in str(e)
+            or is_cpu_or_disk_dispatch_error
             or is_int8_dispatch_bug
         )
         if not can_retry:
@@ -239,6 +239,28 @@ def main() -> None:
                 bnb_4bit_quant_type=cfg.bnb_quant_type,
                 bnb_4bit_use_double_quant=cfg.bnb_use_double_quant,
             )
+            if "max_memory" in model_kwargs and "cpu" in model_kwargs["max_memory"]:
+                gpu_only_max_memory = {
+                    key: value
+                    for key, value in model_kwargs["max_memory"].items()
+                    if key != "cpu"
+                }
+                model_kwargs["max_memory"] = gpu_only_max_memory
+
+        if use_4bit_for_load and is_cpu_or_disk_dispatch_error:
+            print(
+                "4-bit cannot dispatch layers to CPU/disk; retrying with GPU-only "
+                "device map and max_memory."
+            )
+            model_kwargs["device_map"] = (
+                "balanced_low_0" if torch.cuda.device_count() > 1 else "auto"
+            )
+            if "max_memory" in model_kwargs and "cpu" in model_kwargs["max_memory"]:
+                model_kwargs["max_memory"] = {
+                    key: value
+                    for key, value in model_kwargs["max_memory"].items()
+                    if key != "cpu"
+                }
 
         gpu_count = torch.cuda.device_count()
         if gpu_count > 1:
@@ -253,7 +275,8 @@ def main() -> None:
                     gpu_idx: f"{max(1, int(torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)) - profile['reserve_gib'])}GiB"
                     for gpu_idx in range(gpu_count)
                 }
-                retry_max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
+                if not use_4bit_for_load:
+                    retry_max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
                 model_kwargs["device_map"] = profile["device_map"]
                 model_kwargs["max_memory"] = retry_max_memory
                 print(
