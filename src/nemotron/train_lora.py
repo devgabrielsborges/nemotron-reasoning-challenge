@@ -123,6 +123,7 @@ def main() -> None:
         bnb_compute_dtype = torch.bfloat16
 
     # Use quantization + constrained device mapping for 30B model
+    use_4bit_for_load = cfg.use_4bit and not cfg.use_cpu_offload
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
         max_memory = {
@@ -138,10 +139,18 @@ def main() -> None:
                 "device_map": device_map_strategy,
                 "max_memory": max_memory,
                 "use_4bit": cfg.use_4bit,
+                "effective_4bit": use_4bit_for_load,
+                "use_cpu_offload": cfg.use_cpu_offload,
             },
         )
 
-        if cfg.use_4bit:
+        if cfg.use_4bit and not use_4bit_for_load:
+            print(
+                "4-bit disabled because CPU offload is enabled; "
+                "using 8-bit with CPU offload instead."
+            )
+
+        if use_4bit_for_load:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=bnb_compute_dtype,
@@ -165,11 +174,14 @@ def main() -> None:
 
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
-    except RuntimeError as e:
+    except (RuntimeError, ValueError) as e:
         if (
-            "CUDA out of memory" in str(e)
+            (
+                "CUDA out of memory" in str(e)
+                or "dispatched on the CPU or the disk" in str(e)
+            )
             and torch.cuda.is_available()
-            and cfg.use_4bit
+            and use_4bit_for_load
         ):
             print(f"4-bit loading OOM, falling back to 8-bit: {e}")
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
