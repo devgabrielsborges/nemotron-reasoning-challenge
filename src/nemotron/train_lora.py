@@ -175,30 +175,41 @@ def main() -> None:
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
     except (RuntimeError, ValueError) as e:
-        if (
-            (
-                "CUDA out of memory" in str(e)
-                or "dispatched on the CPU or the disk" in str(e)
-            )
-            and torch.cuda.is_available()
-            and use_4bit_for_load
-        ):
-            print(f"4-bit loading OOM, falling back to 8-bit: {e}")
+        can_retry = torch.cuda.is_available() and (
+            "CUDA out of memory" in str(e)
+            or "dispatched on the CPU or the disk" in str(e)
+        )
+        if not can_retry:
+            raise
+
+        print(f"Initial model loading failed, retrying with safer settings: {e}")
+
+        if use_4bit_for_load:
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_8bit=True,
                 llm_int8_enable_fp32_cpu_offload=cfg.use_cpu_offload,
             )
+
+        gpu_count = torch.cuda.device_count()
+        if gpu_count > 1:
+            safer_max_memory = {
+                0: f"{max(10, cfg.gpu_max_memory_gib + 2)}GiB",
+                "cpu": f"{cfg.cpu_max_memory_gib}GiB",
+            }
+            model_kwargs["device_map"] = "auto"
+            model_kwargs["max_memory"] = safer_max_memory
+            print(
+                "Retrying with single-GPU placement on GPU 0 + CPU offload:",
+                safer_max_memory,
+            )
+            model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+        else:
             if "max_memory" in model_kwargs:
                 tightened_max_memory = dict(model_kwargs["max_memory"])
-                for gpu_idx in range(torch.cuda.device_count()):
-                    tightened_max_memory[gpu_idx] = (
-                        f"{max(6, cfg.gpu_max_memory_gib - 2)}GiB"
-                    )
+                tightened_max_memory[0] = f"{max(6, cfg.gpu_max_memory_gib - 2)}GiB"
                 model_kwargs["max_memory"] = tightened_max_memory
                 print("Retrying with tightened max_memory:", tightened_max_memory)
             model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
-        else:
-            raise
 
     model.config.use_cache = False
 
