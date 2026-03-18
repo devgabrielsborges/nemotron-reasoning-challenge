@@ -143,13 +143,13 @@ def main() -> None:
             # 4-bit loading is most stable when all visible GPUs are used with
             # dynamic physical-memory caps and reserved headroom for allocator spikes.
             max_memory = {
-                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 3))}GiB"
+                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 6))}GiB"
                 for gpu_idx in range(gpu_count)
             }
             device_map_strategy = "auto"
         else:
             max_memory = {
-                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 3))}GiB"
+                gpu_idx: f"{max(1, min(cfg.gpu_max_memory_gib, gpu_mem_gib[gpu_idx] - 6))}GiB"
                 for gpu_idx in range(gpu_count)
             }
             device_map_strategy = "auto" if gpu_count > 1 else "auto"
@@ -242,23 +242,45 @@ def main() -> None:
 
         gpu_count = torch.cuda.device_count()
         if gpu_count > 1:
-            safer_max_memory = {
-                gpu_idx: f"{max(1, int(torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)) - 3)}GiB"
-                for gpu_idx in range(gpu_count)
-            }
-            safer_max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
-            model_kwargs["device_map"] = "auto"
-            model_kwargs["max_memory"] = safer_max_memory
-            print(
-                "Retrying with dominant-GPU placement + CPU offload:",
-                safer_max_memory,
-            )
-            model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
+            retry_profiles = [
+                {"reserve_gib": 6, "device_map": "balanced_low_0"},
+                {"reserve_gib": 7, "device_map": "auto"},
+                {"reserve_gib": 8, "device_map": "sequential"},
+            ]
+            last_retry_error: Exception | None = None
+            for profile in retry_profiles:
+                retry_max_memory = {
+                    gpu_idx: f"{max(1, int(torch.cuda.get_device_properties(gpu_idx).total_memory / (1024**3)) - profile['reserve_gib'])}GiB"
+                    for gpu_idx in range(gpu_count)
+                }
+                retry_max_memory["cpu"] = f"{cfg.cpu_max_memory_gib}GiB"
+                model_kwargs["device_map"] = profile["device_map"]
+                model_kwargs["max_memory"] = retry_max_memory
+                print(
+                    "Retrying model load:",
+                    {
+                        "device_map": profile["device_map"],
+                        "reserve_gib": profile["reserve_gib"],
+                        "max_memory": retry_max_memory,
+                    },
+                )
+                try:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        model_path, **model_kwargs
+                    )
+                    break
+                except (RuntimeError, ValueError, TypeError) as retry_err:
+                    last_retry_error = retry_err
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    continue
+            else:
+                raise last_retry_error if last_retry_error is not None else e
         else:
             if "max_memory" in model_kwargs:
                 tightened_max_memory = dict(model_kwargs["max_memory"])
                 tightened_max_memory[0] = (
-                    f"{max(1, int(torch.cuda.get_device_properties(0).total_memory / (1024**3)) - 3)}GiB"
+                    f"{max(1, int(torch.cuda.get_device_properties(0).total_memory / (1024**3)) - 8)}GiB"
                 )
                 model_kwargs["max_memory"] = tightened_max_memory
                 print("Retrying with tightened max_memory:", tightened_max_memory)
