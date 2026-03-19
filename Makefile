@@ -60,7 +60,7 @@ train-all:
 
 nemotron-train:
 	@set -a && [ -f .env ] && . ./.env && set +a; \
-	CUDA_VISIBLE_DEVICES=$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0,1}} \
+	CUDA_VISIBLE_DEVICES=$$( [ "$${NEMOTRON_CPU_ONLY:-false}" = "true" ] && echo "" || echo "$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0,1}}" ) \
 	PYTORCH_CUDA_ALLOC_CONF=$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:64} \
 	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora
 
@@ -73,7 +73,7 @@ nemotron-train-lowmem:
 	NEMOTRON_SUBSAMPLE_SIZE=$${NEMOTRON_SUBSAMPLE_SIZE:-200} \
 	NEMOTRON_NUM_EPOCHS=$${NEMOTRON_NUM_EPOCHS:-1} \
 	NEMOTRON_OPTIMIZER=$${NEMOTRON_OPTIMIZER:-adafactor} \
-	CUDA_VISIBLE_DEVICES=$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0,1}} \
+	CUDA_VISIBLE_DEVICES=$$( [ "$${NEMOTRON_CPU_ONLY:-false}" = "true" ] && echo "" || echo "$${NEMOTRON_CUDA_VISIBLE_DEVICES:-$${CUDA_VISIBLE_DEVICES:-0,1}}" ) \
 	PYTORCH_CUDA_ALLOC_CONF=$${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:64} \
 	PYTHONPATH=src uv run --python 3.11 -m nemotron.train_lora
 

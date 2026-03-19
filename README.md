@@ -27,6 +27,7 @@ Set or confirm these key values in `.env`:
 - `PROMPT_COLUMN=prompt`
 - `NEMOTRON_LORA_RANK=32` (must be <= 32)
 - Optional `NEMOTRON_MODEL_PATH=/path/to/local/model` (otherwise `kagglehub` downloads)
+- Optional `NEMOTRON_CPU_ONLY=true` to force CPU-only runs
 
 ### 2) Install dependencies
 
@@ -44,6 +45,12 @@ make init
 
 ```bash
 make nemotron-train
+```
+
+For CPU-only execution:
+
+```bash
+NEMOTRON_CPU_ONLY=true make nemotron-train
 ```
 
 Artifacts are written to `NEMOTRON_OUTPUT_DIR` (default: `artifacts/adapter`).

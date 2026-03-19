@@ -32,6 +32,7 @@ class NemotronConfig:
     bnb_compute_dtype: str
     bnb_quant_type: str
     bnb_use_double_quant: bool
+    cpu_only: bool
     cuda_visible_devices: str | None
     gpu_max_memory_gib: int
     cpu_max_memory_gib: int
@@ -89,6 +90,8 @@ class NemotronConfig:
             bnb_use_double_quant=os.getenv(
                 "NEMOTRON_BNB_USE_DOUBLE_QUANT", "true"
             ).lower()
+            in ("true", "1", "yes"),
+            cpu_only=os.getenv("NEMOTRON_CPU_ONLY", "false").lower()
             in ("true", "1", "yes"),
             cuda_visible_devices=os.getenv("NEMOTRON_CUDA_VISIBLE_DEVICES", "0"),
             gpu_max_memory_gib=int(os.getenv("NEMOTRON_GPU_MAX_MEMORY_GIB", "20")),

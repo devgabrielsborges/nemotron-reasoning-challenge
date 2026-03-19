@@ -86,7 +86,10 @@ def main() -> None:
     load_dotenv(override=True)
     cfg = NemotronConfig.from_env()
 
-    if cfg.cuda_visible_devices:
+    if cfg.cpu_only:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("CPU-only mode enabled (NEMOTRON_CPU_ONLY=true)")
+    elif cfg.cuda_visible_devices:
         os.environ["CUDA_VISIBLE_DEVICES"] = cfg.cuda_visible_devices
 
     set_seed(cfg.random_seed)
