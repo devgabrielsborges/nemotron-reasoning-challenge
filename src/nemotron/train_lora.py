@@ -113,7 +113,14 @@ def main() -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    torch_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    if cfg.cpu_dtype == "float16":
+        cpu_dtype = torch.float16
+    elif cfg.cpu_dtype == "float32":
+        cpu_dtype = torch.float32
+    else:
+        cpu_dtype = torch.bfloat16
+
+    torch_dtype = torch.bfloat16 if torch.cuda.is_available() else cpu_dtype
     model_kwargs = {
         "trust_remote_code": True,
         "low_cpu_mem_usage": True,
@@ -199,6 +206,8 @@ def main() -> None:
             model_kwargs["offload_folder"] = str(cfg.offload_dir)
     else:
         model_kwargs["torch_dtype"] = torch_dtype
+        model_kwargs["device_map"] = "cpu"
+        print(f"CPU model dtype: {cfg.cpu_dtype}")
 
     try:
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)

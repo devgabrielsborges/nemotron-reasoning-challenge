@@ -53,6 +53,12 @@ For CPU-only execution:
 NEMOTRON_CPU_ONLY=true make nemotron-train
 ```
 
+To reduce RAM usage in CPU mode, set:
+
+```bash
+NEMOTRON_CPU_ONLY=true NEMOTRON_CPU_DTYPE=bfloat16 make nemotron-train
+```
+
 Artifacts are written to `NEMOTRON_OUTPUT_DIR` (default: `artifacts/adapter`).
 
 ### 5) Create submission zip
